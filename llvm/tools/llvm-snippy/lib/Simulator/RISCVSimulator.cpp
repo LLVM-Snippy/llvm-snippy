@@ -237,8 +237,6 @@ unsigned RISCVSimulatorSysRegs::getBitWidth(const RISCVSubtarget &ST,
     return 3;
   case RISCVSimulatorSysReg::FCSR:
     return 32;
-  case RISCVSimulatorSysReg::VSTART:
-    return ST.getXLen();
   case RISCVSimulatorSysReg::VXSAT:
     return 1;
   case RISCVSimulatorSysReg::VXRM:
@@ -247,6 +245,7 @@ unsigned RISCVSimulatorSysRegs::getBitWidth(const RISCVSubtarget &ST,
     return 3;
   case RISCVSimulatorSysReg::JVT:
   case RISCVSimulatorSysReg::MSTATUS:
+  case RISCVSimulatorSysReg::VSTART:
     return ST.getXLen();
   }
   llvm_unreachable("unhandled enum value");
