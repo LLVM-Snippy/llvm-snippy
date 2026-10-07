@@ -73,6 +73,9 @@ struct DenseMapInfo<snippy::SelfcheckAnnotationInfo<InstrItType>> {
 
 namespace snippy {
 
+void reloadPreservedLoopRegs(InstructionGenerationContext &IGC,
+                             ArrayRef<Register> Regs);
+
 #define DEBUG_TYPE "instruction generation"
 
 extern cl::OptionCategory Options;
@@ -1388,6 +1391,12 @@ findNextBlock(MachineBasicBlock *MBB,
     // after the latch block.
     if (ML && ML->getLoopLatch() == MBB)
       return ML->getExitBlock();
+    // The counter update is not interpreted, so the model's branch can skip
+    // the latch. Visit it once so compensation is inserted.
+    if (ML && ML->getExitingBlock() == MBB)
+      if (auto *Latch = ML->getLoopLatch())
+        if (Latch != MBB && NotVisited.count(Latch))
+          return Latch;
     return findNextBlockOnModel(*MBB, State, SimCtx);
   }
   // When we're not tracking execution on the model or worrying about BBs
@@ -1756,6 +1765,20 @@ void generate(planning::FunctionRequest &FunctionGenRequest,
              "Latch block for compensation code cannot be requested to "
              "generate primary instructions");
       CurrMFGenStats.merge(generateCompensationCode(*MBB, GC, SimCtx));
+      // Compensation may use the counter registers as scratch. Put the body
+      // values back after that, before the latch jumps to the header. This is
+      // not interpreted: generation never executed the counter writes, so the
+      // model already holds the body values.
+      if (SLI) {
+        if (const auto *Info =
+                SLI->getLoopsGenerationInfoForMBB(ML->getHeader())) {
+          if (!Info->BodySpilledRegs.empty()) {
+            InstructionGenerationContext LatchCtx{
+                *MBB, MBB->getFirstTerminator(), GC, SimCtx};
+            reloadPreservedLoopRegs(LatchCtx, Info->BodySpilledRegs);
+          }
+        }
+      }
     } else {
       SNIPPY_DEBUG_BRIEF("request for reachable BasicBlock", BBReq);
 

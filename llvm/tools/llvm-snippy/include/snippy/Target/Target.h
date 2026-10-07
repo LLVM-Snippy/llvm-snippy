@@ -214,6 +214,13 @@ public:
   virtual void generatePopNoReload(InstructionGenerationContext &IGC,
                                    MCRegister Reg) const = 0;
 
+  // Load Reg from SP + Offset without changing SP. Offset is a
+  // byte displacement. Used to read a loop-body register saved underneath the
+  // live counter slots. RISC-V overrides this.
+  virtual void generateLoadFromStackOffset(InstructionGenerationContext &,
+                                           MCRegister, MCRegister,
+                                           int64_t) const {}
+
   virtual unsigned getRegBitWidth(MCRegister Reg,
                                   InstructionGenerationContext &IGC) const = 0;
 
