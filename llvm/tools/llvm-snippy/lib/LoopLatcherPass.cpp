@@ -260,6 +260,35 @@ static MachineInstr &updateLatchBranch(MachineLoop &ML, MachineInstr &Branch,
   return NewBranch;
 }
 
+void reloadPreservedLoopRegs(InstructionGenerationContext &IGC,
+                             ArrayRef<Register> Regs) {
+  if (Regs.empty())
+    return;
+
+  auto &ProgCtx = IGC.ProgCtx;
+  const auto &Tgt = ProgCtx.getLLVMState().getSnippyTarget();
+  const auto &SubTgt = IGC.getSubtargetImpl();
+  auto SpillSize = static_cast<int64_t>(
+      Tgt.getSpillSizeInBytes(Regs.front(), ProgCtx, SubTgt));
+  for (auto Reg : drop_begin(Regs))
+    assert(Tgt.getSpillSizeInBytes(Reg, ProgCtx, SubTgt) ==
+               static_cast<unsigned>(SpillSize) &&
+           "Loop registers must share one spill size");
+
+  auto SP = ProgCtx.getStackPointer();
+  if (ProgCtx.getConfig().StaticStack && ProgCtx.getStaticStack().isSPInReg())
+    SP = ProgCtx.getStaticStack().getRegWithSPAddrLocal();
+
+  // Spills are in Regs order: body copies first, then the counter copies.
+  // SP points at the last counter slot, so the body copy of Regs[I] sits at
+  // (2 * N - 1 - I) slots above SP.
+  auto N = Regs.size();
+  for (auto [I, Reg] : enumerate(Regs)) {
+    auto Offset = static_cast<int64_t>((2 * N - 1 - I) * SpillSize);
+    Tgt.generateLoadFromStackOffset(IGC, Reg, SP, Offset);
+  }
+}
+
 static void
 processExitingBlock(MachineLoop &ML, MachineBasicBlock &ExitingBlock,
                     MachineBasicBlock &Preheader, SimulatorContext &SimCtx,
@@ -310,17 +339,27 @@ processExitingBlock(MachineLoop &ML, MachineBasicBlock &ExitingBlock,
   auto PreheaderInsertPt = Preheader.getFirstTerminator();
   InstructionGenerationContext PHCtx{Preheader, PreheaderInsertPt, SGCtx,
                                      SimCtx};
+  auto SP = ProgCtx.getStackPointer();
+  auto IsStackLoopCountersRequested = Branches.isStackLoopCountersRequested();
+  SmallVector<Register, 2> BodySpilledRegs;
+  // Spill loop registers to stack for tracking mode.
+  if (TrackingMode) {
+    for (auto &&Reg : ReservedRegs)
+      SnippyTgt.generateSpillToStack(PHCtx, Reg, SP);
+    BodySpilledRegs.assign(ReservedRegs.begin(), ReservedRegs.end());
+  }
+
   auto LoopCounterInfo =
       SnippyTgt.insertLoopInit(PHCtx, NewBranch, Branches, ReservedRegs, NIter);
   auto &[LoopInitDiag, LoopStrideDiag, MinLoopCountVal, StrideVal] =
       LoopCounterInfo;
 
-  auto SP = ProgCtx.getStackPointer();
-  auto IsStackLoopCountersRequested = Branches.isStackLoopCountersRequested();
   if (IsStackLoopCountersRequested || TrackingMode) {
     for (auto &&Reg : ReservedRegs)
       SnippyTgt.generateSpillToStack(PHCtx, Reg, SP);
   }
+  if (TrackingMode)
+    reloadPreservedLoopRegs(PHCtx, BodySpilledRegs);
 
   LLVM_DEBUG(dbgs() << "Loop counter init inserted: "; Preheader.dump());
 
@@ -359,7 +398,7 @@ processExitingBlock(MachineLoop &ML, MachineBasicBlock &ExitingBlock,
   auto CounterReg = ReservedRegs[CounterRegIdx];
   SnippyLoopInfo::LoopGenerationInfo TheLoopGenInfo{
       CounterReg, ActualNumIter, MinCounterVal,
-      SnippyTgt.getLoopType(NewBranch)};
+      SnippyTgt.getLoopType(NewBranch), std::move(BodySpilledRegs)};
   SLI.addLoopGenerationInfoForMBB(ML.getHeader(), TheLoopGenInfo);
 
   if (IsStackLoopCountersRequested || TrackingMode) {
@@ -372,6 +411,12 @@ processExitingBlock(MachineLoop &ML, MachineBasicBlock &ExitingBlock,
                                          SimCtx};
     for (auto &&Reg : reverse(ReservedRegs))
       SnippyTgt.generatePopNoReload(ExitCtx, Reg);
+    // The body copies sit under the counter slots. Drop them too, and leave
+    // the registers holding the final count the exit block was checked against.
+    if (TrackingMode) {
+      for (auto &&Reg : reverse(ReservedRegs))
+        SnippyTgt.generatePopNoReload(ExitCtx, Reg);
+    }
   }
 
   // Perform only a one-time diagnostics for the given warning and a continuous

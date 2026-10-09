@@ -3693,6 +3693,19 @@ public:
         .addImm(SpillSize);
   }
 
+  void generateLoadFromStackOffset(InstructionGenerationContext &IGC,
+                                   MCRegister Reg, MCRegister SP,
+                                   int64_t Offset) const override {
+    assert(RISCV::GPRRegClass.contains(Reg) &&
+           "Loop counter registers are GPRs");
+    assert(isInt<12>(Offset) &&
+           "Stack offset does not fit in a load immediate");
+    const auto &ST = IGC.getSubtarget<RISCVSubtarget>();
+    auto LoadOp = ST.getXLen() == 32 ? RISCV::LW : RISCV::LD;
+    auto Load = MCInstBuilder(LoadOp).addReg(Reg).addReg(SP).addImm(Offset);
+    addGeneratedInstrsToBB(IGC, {Load}, *this);
+  }
+
   void generatePopNoReload(InstructionGenerationContext &IGC,
                            MCRegister Reg) const override {
     auto &ProgCtx = IGC.ProgCtx;
