@@ -3700,10 +3700,15 @@ public:
            "Loop counter registers are GPRs");
     assert(isInt<12>(Offset) &&
            "Stack offset does not fit in a load immediate");
+    auto &MBB = IGC.MBB;
+    auto &Ins = IGC.Ins;
+    auto &State = IGC.ProgCtx.getLLVMState();
     const auto &ST = IGC.getSubtarget<RISCVSubtarget>();
     auto LoadOp = ST.getXLen() == 32 ? RISCV::LW : RISCV::LD;
-    auto Load = MCInstBuilder(LoadOp).addReg(Reg).addReg(SP).addImm(Offset);
-    addGeneratedInstrsToBB(IGC, {Load}, *this);
+    getSupportInstBuilder(*this, MBB, Ins, State.getCtx(),
+                          State.getInstrInfo().get(LoadOp), Reg)
+        .addReg(SP)
+        .addImm(Offset);
   }
 
   void generatePopNoReload(InstructionGenerationContext &IGC,
