@@ -10,6 +10,7 @@
 #define LLVM_TOOLS_LLVM_SNIPPY_GENERATOR_SNIPPYLOOPINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <unordered_map>
 
@@ -26,6 +27,10 @@ public:
     unsigned NumIter;
     unsigned SmallestCounterVal;
     LoopType Type;
+    // In self-check mode these registers are spilled twice. The deeper slots
+    // hold the values the loop body must see. The slots above them hold the
+    // counter. Empty when the body is allowed to run with the counter live.
+    SmallVector<Register, 2> BodySpilledRegs;
   };
 
   SnippyLoopInfo() = default;
